@@ -10,6 +10,7 @@
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -241,24 +242,17 @@ int main(int argc, char** argv) {
   server.surface_offset = 0;
   server.display = wl_display_create();
   server.backend = wlr_backend_autocreate(server.display, NULL);
-  server.scene = wlr_scene_create();
-
   server.renderer = wlr_renderer_autocreate(server.backend);
   wlr_renderer_init_wl_display(server.renderer, server.display);
-
   server.allocator = wlr_allocator_autocreate(server.backend, server.renderer);
 
   struct wlr_compositor *compositor = wlr_compositor_create(server.display, server.renderer);
-
-  wlr_xdg_shell_create(server.display, 2);
+  struct wlr_subcompositor *subcompositor = wlr_subcompositor_create(server.display);
 
   server.output_layout = wlr_output_layout_create();
   wl_list_init(&server.outputs);
-  
   server.new_output.notify = server_handle_new_output;
   wl_signal_add(&server.backend->events.new_output, &server.new_output);
-
-  
   
   server.scene = wlr_scene_create();
   wlr_scene_attach_output_layout(server.scene, server.output_layout);
@@ -279,7 +273,7 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
   
-  setenv("WAYKAND_DISPLAY", socket, true);
+  setenv("WAYLAND_DISPLAY", socket, true);
   if (startup_cmd != NULL) {
     if (fork() == 0) {
       execl("/bin/sh", "/bin/sh", "-c", startup_cmd, (void*) NULL);
