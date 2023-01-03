@@ -11,6 +11,7 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
@@ -22,6 +23,16 @@ struct server {
   struct wlr_allocator *allocator; /* (?) */
   struct wlr_scene *scene;	   /* (?) */
 
+  struct wlr_output_layout *output_layout; /* arrangement out outputs */
+  struct wl_list outputs;
+  
+  
+  struct wlr_xdg_shell *xdg_shell;
+  struct wl_listener new_xdg_surface;
+  struct wl_list views;
+
+  /* input stuff goes here */
+  
   uint32_t surface_offset; 	/* (?) */
 
   struct wl_listener new_output; /* catch a new output being created */
@@ -50,6 +61,20 @@ struct output {
 
   struct wl_listener frame; 	/* called when the output (monitor) is ready to draw again (refresh rate) */
 };
+
+struct view {
+  /* I guess this is a higher level wrapper for a surface? between a
+     surface and a shell or something else */
+  struct wl_list link;
+  struct server *server;
+  struct wlr_xdg_toplevel *xdg_toplevel;
+  struct wlr_scene_tree *scene_tree;
+  struct wl_listener map; 	/* show this view */
+  struct wl_listener unmap; 	/* hide this view */
+  struct wl_listener destroy; 	/* we are done */
+  int x, y;
+};
+
 
 static void output_handle_frame (struct wl_listener *listener, void *data) {
   struct output *output = wl_container_of(listener, output, frame);
@@ -83,10 +108,15 @@ static void server_handle_new_output (struct wl_listener *listener, void *data) 
   if (!wl_list_empty(&wlr_output->modes)) {
     struct wlr_output_mode *mode = wlr_output_preferred_mode(wlr_output);
     wlr_output_set_mode(wlr_output, mode);
-    wlr_output_commit(wlr_output);
+    wlr_output_enable(wlr_output, true);
+    if (!wlr_output_commit(wlr_output)) {
+      return;
+    }
   }
 
   wlr_output_create_global(wlr_output);
+  wl_list_insert(&server->outputs, &output->link);
+  wlr_output_layout_add_auto(server->output_layout, wlr_output);
 }
 
 static void surface_handle_commit (struct wl_listener *listener, void *data) {
@@ -127,6 +157,65 @@ static void server_handle_new_surface(struct wl_listener *listener, void *data) 
   wlr_scene_node_set_position(&surface->scene_surface->buffer->node, pos, pos);
 }
 
+/* now we need xdg stuff. this will be mostly stolen from  tinywl */
+
+static void xdg_toplevel_map (struct wl_listener *listener, void *data) {
+  /* surface is mapped (ready to display) */
+  struct view *view = wl_container_of(listener, view, map);
+
+  wl_list_insert(&view->server->views, &view->link);
+
+  /* focus? */
+}
+
+static void xdg_toplevel_unmap (struct wl_listener *listener, void *data) {
+  struct view *view = wl_container_of(listener, view, unmap);
+
+  wl_list_remove(&view->link);
+}
+
+static void xdg_toplevel_destroy (struct wl_listener *listener, void *data) {
+  struct view *view = wl_container_of(listener, view, destroy);
+
+  wl_list_remove(&view->map.link);
+  wl_list_remove(&view->unmap.link);
+  wl_list_remove(&view->destroy.link);
+  
+  free(view);
+}
+
+static void server_new_xdg_surface (struct wl_listener *listener, void *data) {
+  /* raised when a client requests a new xdg surface */
+  struct server *server = wl_container_of(listener, server, new_xdg_surface);
+  struct wlr_xdg_surface *xdg_surface = data;
+
+  /* add popups to scene graph so they can be rendered. They need to have a proper parent, so we set the user data field as said scene node (?) */
+  if (xdg_surface->role == WLR_XDG_SURFACE_ROLE_POPUP) {
+    struct wlr_xdg_surface *parent = wlr_xdg_surface_from_wlr_surface(xdg_surface->popup->parent);
+    struct wlr_scene_tree *parent_tree = parent->data;
+    xdg_surface->data = wlr_scene_xdg_surface_create(parent_tree, xdg_surface);
+    return;
+  }
+
+  assert(xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL);
+
+  /* allocate a view */
+  struct view *view = calloc(1, sizeof(struct view));
+  view->server = server;
+  view->xdg_toplevel = xdg_surface->toplevel;
+  view->scene_tree = wlr_scene_xdg_surface_create(&view->server->scene->tree, view->xdg_toplevel->base);
+  view->scene_tree->node.data = view;
+  xdg_surface->data = view->scene_tree;
+
+  /* set listeners */
+  view->map.notify = xdg_toplevel_map;
+  wl_signal_add(&xdg_surface->events.map, &view->map);
+  view->unmap.notify = xdg_toplevel_unmap;
+  wl_signal_add(&xdg_surface->events.unmap, &view->unmap);
+  view->destroy.notify = xdg_toplevel_destroy;
+  wl_signal_add(&xdg_surface->events.destroy, &view->destroy);
+}
+
 int main(int argc, char** argv) {
   wlr_log_init(WLR_DEBUG, NULL);
 
@@ -163,9 +252,22 @@ int main(int argc, char** argv) {
 
   wlr_xdg_shell_create(server.display, 2);
 
+  server.output_layout = wlr_output_layout_create();
+  wl_list_init(&server.outputs);
+  
   server.new_output.notify = server_handle_new_output;
   wl_signal_add(&server.backend->events.new_output, &server.new_output);
 
+  
+  
+  server.scene = wlr_scene_create();
+  wlr_scene_attach_output_layout(server.scene, server.output_layout);
+
+  wl_list_init(&server.views);
+  server.xdg_shell = wlr_xdg_shell_create(server.display, 3); /* ? */
+  server.new_xdg_surface.notify = server_new_xdg_surface;
+  wl_signal_add(&server.xdg_shell->events.new_surface, &server.new_xdg_surface);  
+  
   const char *socket = wl_display_add_socket_auto(server.display);
   if (!socket) {
     wl_display_destroy(server.display);
@@ -176,7 +278,7 @@ int main(int argc, char** argv) {
     wl_display_destroy(server.display);
     return EXIT_FAILURE;
   }
-
+  
   setenv("WAYKAND_DISPLAY", socket, true);
   if (startup_cmd != NULL) {
     if (fork() == 0) {
