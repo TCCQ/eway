@@ -26,42 +26,11 @@
 
 #include <xkbcommon/xkbcommon.h>
 
-struct server {
-  struct wl_display *display;	/* talk with the comp */
-  struct wlr_backend *backend; 	/* how are we rendering pixels */
-  struct wlr_renderer *renderer; 	/* what's doing the rendering (?)*/
-  struct wlr_allocator *allocator; /* (?) */
-  struct wlr_scene *scene;	   /* (?) */
+#include "server.h"
+#include "ipc.h"
 
-  struct wlr_output_layout *output_layout; /* arrangement out outputs */
-  struct wl_list outputs;
-  struct wl_listener new_output; /* catch a new output being created */
-  
-  struct wlr_xdg_shell *xdg_shell;
-  struct wl_listener new_xdg_surface;
-  struct wl_list views;
 
-  struct wlr_seat *seat;
-  struct wl_list keyboards;
-  struct wlr_cursor *cursor;
-  struct wl_listener new_input;
-  
-  struct wlr_xcursor_manager *cursor_mgr;
-  struct wl_listener cursor_motion;
-  struct wl_listener cursor_motion_absolute;
-  struct wl_listener cursor_button;
-  struct wl_listener cursor_axis;
-  struct wl_listener cursor_frame;
-  
-  struct wl_listener request_cursor;
-  struct wl_listener request_set_selection;
-  
-
-  uint32_t surface_offset; 	/* where to put the next surface  */
-
-  /* struct wl_listener new_surface; /\* someone wants a new surface. in scene_graph but not in tinywl? *\/ */
-};
-
+struct server *global_server; 	/* see server.h */
 struct surface {
   struct wlr_surface *wlr; 	/* (?) */
   struct wlr_scene_surface *scene_surface;	/* where it is in the scene (?) */
@@ -557,10 +526,13 @@ int main(int argc, char** argv) {
   struct server server = {0};
   server.surface_offset = 0;
   server.display = wl_display_create();
+  server.wl_event_loop = wl_display_get_event_loop(server.display);
   server.backend = wlr_backend_autocreate(server.display, NULL);
   server.renderer = wlr_renderer_autocreate(server.backend);
   wlr_renderer_init_wl_display(server.renderer, server.display);
   server.allocator = wlr_allocator_autocreate(server.backend, server.renderer);
+
+  global_server = &server;	/* see server.h */
 
   struct wlr_compositor *compositor = wlr_compositor_create(server.display, server.renderer);
   struct wlr_subcompositor *subcompositor = wlr_subcompositor_create(server.display);
@@ -619,6 +591,8 @@ int main(int argc, char** argv) {
     wl_display_destroy(server.display);
     return EXIT_FAILURE;
   }
+
+  init_socket();
   
   setenv("WAYLAND_DISPLAY", socket, true);
   if (startup_cmd != NULL) {

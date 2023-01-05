@@ -14,15 +14,28 @@ xdg-shell-protocol.h:
 	$(WAYLAND_SCANNER) server-header \
 		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml $@
 
-comp: comp.c xdg-shell-protocol.h
+comp.o: comp.c xdg-shell-protocol.h server.h ipc.h
 	$(CC) $(CFLAGS) \
-		-g -Werror -I. \
+		-c -g -Werror -I. \
 		-DWLR_USE_UNSTABLE \
 		-o $@ $< \
 		$(LIBS)
 
+ipc.o: ipc.c server.h ipc.h
+	$(CC) $(CFLAGS) \
+		-c -g -Werror -I. \
+		-DWLR_USE_UNSTABLE \
+		-o $@ $< \
+		$(LIBS)
+
+comp: comp.o ipc.o
+	$(CC) $(CFLAGS) \
+		-g -Werror -I. \
+		-DWLR_USE_UNSTABLE \
+		-o $@ $^ \
+		$(LIBS)
 clean:
-	rm -f comp
+	rm -f comp *.o
 
 .DEFAULT_GOAL=comp
 
