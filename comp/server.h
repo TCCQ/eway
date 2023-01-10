@@ -38,6 +38,16 @@ struct server {
   /* struct wl_listener new_surface; /\* someone wants a new surface. in scene_graph but not in tinywl? *\/ */
 };
 
-
 extern struct server *global_server;
+
+/* emacs ipc stuff, called from ipc.c but needs to see the internal state of the server */
+typedef id_t void*;
+
+int resize_translate_view(id_t id, int x, int y, int width, int height);
+
+int close_view(id_t id);
+
+int hide_view(id_t id);
+
+int focus_view(id_t id);
 #endif
