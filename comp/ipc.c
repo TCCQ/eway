@@ -1,24 +1,29 @@
-#include <wayland-server-core.h>
-#include <wlr/util/log.h>
+#define _POSIX_C_SOURCE 200112L
+
+#include <stdlib.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <assert.h>
+
+#include <wayland-server-core.h>
+#include <wlr/util/log.h>
+
 #include "server.h"
 #include "ipc.h"
+
 
 int ipc_fd, connection_fd = -1;
 struct wl_event_source *client_event_source = NULL;
 
-const int ipc_read_buffer_length = 1024;
-const int ipc_write_buffer_length = 1024;
+#define ipc_read_buffer_length 1024
+#define ipc_write_buffer_length 1024
 char client_read_buffer[ipc_read_buffer_length];
-char client_write_buffer[ipc_write_buffer_legnth];
+char client_write_buffer[ipc_write_buffer_length];
 int client_read_start = 0;
 int client_read_end = 0;
 int client_write_start = 0;
@@ -30,7 +35,7 @@ struct sockaddr_un address;
 socklen_t addr_len;
 struct wl_listener ipc_display_destroy;
 struct wl_event_source *ipc_event_source = NULL;
-const char* DEFAULT_SOCK_ADDR = "/home/tmu/ewayInSocket";
+const char* DEFAULT_SOCK_ADDR = "/home/tmu/ewaySock";
 
 int ipc_parse(char* line) {
   /* line is null terminated and does not have a \n at the
@@ -38,12 +43,13 @@ int ipc_parse(char* line) {
      ipc socket and perfom said request. Will do a single pass and
      consume tokens along the way. */
   enum socket_request type;
-  int id;
+  eway_id_t id;
   int args[4];
 
   int token_number = 0;
   int last_space = -1;
   int idx = 0;
+  long int tmp;
   while (line[idx] != 0) {
     while (line[idx] != 0 && line[idx] != ' ') {
       idx++;
@@ -66,11 +72,12 @@ int ipc_parse(char* line) {
 	return -1;
       }
     } else if (token_number == 1){
-      id = atoi(start);
-      if (id == 0) {
+      tmp = atoi(start);
+      if (tmp == 0) {
 	wlr_log(WLR_ERROR, "ipc request reported id zero. Could it be malformed?");
 	return -1;
       }
+      id = (eway_id_t) tmp;
     } else {
       args[token_number - 2] = atoi(start);
     }
@@ -208,8 +215,8 @@ int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
   } else if (client_write_start > client_write_end) {
     /* requires a loop, split into two writes*/
     ssize_t written = write(client_fd, client_write_buffer + client_write_start,
-			    client_write_buffer_length - client_write_start);
-    if (written == -1 && (ERRNO == EAGAIN || ERRNO == EWOULDBLOCK)) {
+			    ipc_write_buffer_length - client_write_start);
+    if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       /* would block, give up */
       return 0;
     } else if (written == -1) {
@@ -218,7 +225,7 @@ int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
       return -1;
     }
       
-    client_write_start = (client_write_start + written) % ipc_write_buffer_legnth;
+    client_write_start = (client_write_start + written) % ipc_write_buffer_length;
     if (client_write_start != 0) {
       /* didn't completely finish first write, not safe to start
 	 second currently. leave the remains for the next time */
@@ -227,7 +234,7 @@ int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
       
     /* do the second half starting from the beginning of the queue */
     written = write(client_fd, client_write_buffer, client_write_end);
-    if (written == -1 && (ERRNO == EAGAIN || ERRNO == EWOULDBLOCK)) {
+    if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       /* would block, give up */
       return 0;
     } else if (written == -1) {
@@ -242,7 +249,7 @@ int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
 
 
   ssize_t written = write(client_fd, client_write_buffer + client_write_start, client_write_end - client_write_start);
-  if (written == -1 && (ERRNO == EAGAIN || ERRNO == EWOULDBLOCK)) {
+  if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     /* would block, ignore and retry later */
     return 0;
   } else if (written == -1) {
@@ -250,7 +257,7 @@ int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
     return -1;
   }
 
-  client_write_start = (client_write_start + written) % client_write_buffer_length;
+  client_write_start = (client_write_start + written) % ipc_write_buffer_length;
   
   
 }
@@ -299,7 +306,7 @@ int ipc_handle_connection (int fd, uint32_t mask, void *data) {
   return 0;
 }
 
-int init_socket (void) {
+int init_socket (struct server* server) {
   if ((ipc_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) < 0) {
     wlr_log(WLR_ERROR, "Could not create a ipc socket");
     return -1;
@@ -331,7 +338,6 @@ int init_socket (void) {
     return -1;
   }
 
-  struct server *server = global_server; /* server.h */
   ipc_display_destroy.notify = ipc_on_display_destroy;
   wl_display_add_destroy_listener(server->display, &ipc_display_destroy);
   ipc_event_source = wl_event_loop_add_fd(server->wl_event_loop, ipc_fd, WL_EVENT_READABLE | WL_EVENT_WRITABLE, ipc_handle_connection, server);
@@ -342,4 +348,27 @@ int init_socket (void) {
      but the automatic callbacks should handle that */
     
   return 0;
+}
+
+
+int ipc_inform_create (eway_id_t id, const char* name) {
+  /* inform the other side of the pipe that a new surface has been created */
+  char msg[256];
+  int len = snprintf(msg, 256, "NEW %d %s\n", id, name);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in the ipc_inform_create call");
+    return -1;
+  } 
+  return ipc_queue_write(msg, len);
+}
+
+int ipc_inform_destroy (eway_id_t id) {
+  /* inform the other side of the pipe that the surface with said id should no longer be considered extant */
+  char msg[256];
+  int len = snprintf(msg, 256, "DESTROY %d\n", id);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in ipc_inform_destory call");
+    return -1;
+  }
+  return ipc_queue_write(msg, len);
 }

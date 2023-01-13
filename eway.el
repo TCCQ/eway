@@ -32,6 +32,16 @@
 
 (defvar eway--unfinished-request "" "if a request is incomplete, it's stored here until it is compeleted")
 
+(defun eway--eway-buffer-from-WM-id (id)
+  "get the buffer associated with the id from the plist, or return nil"
+  (plist-get eway--WM-window-plist id))
+
+(defun eway--destroy (id)
+  "respond to a destroy request from the socket"
+  (let ((buf (eway--eway-buffer-from-WM-id)))
+    (when buf
+      (kill-buffer buf))))
+
 (defun eway--parse-request ()
   "parse and fufill request in `eway--unfinished-request'"
   (let ((parts (string-split eway--unfinished-request " " t  "[ \t\n]")))
@@ -39,6 +49,9 @@
 	   (let ((id (string-to-number (car (cdr parts))))
 		 (name (car (cdr (cdr parts)))))
 	     (eway--make-WM-buffer id name)))
+	  ((string= (car parts) "DESTROY")
+	   (let* ((id (string-to-number (car (cdr parts)))))
+	     (eway--destroy id)))
 	  ;; eventually have focus shifts that don't go through emacs
 	  ;; ((string = (car parts) "FOCUS")
 	   ;; (eway--change-focus (car (cdr parts))))
