@@ -38,7 +38,7 @@
 
 (defun eway--destroy (id)
   "respond to a destroy request from the socket"
-  (let ((buf (eway--eway-buffer-from-WM-id)))
+  (let ((buf (eway--eway-buffer-from-WM-id id)))
     (when buf
       (kill-buffer buf))))
 
@@ -103,7 +103,8 @@
 
 (defun eway--pass-message (msg)
   "wrapper for communicating with the compositor process"
-  ;; IPC stuff with the process
+  (let ((minibuffer-message-timeout 0))
+    (message "Sent %s" msg))
   (process-send-string eway--socket msg))
 
 (defun eway--release-focus ()

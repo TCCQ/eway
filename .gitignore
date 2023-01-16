@@ -1,4 +1,6 @@
 *~
+*.o
 wlroots
+cage
 *TAG*
 *GPATH

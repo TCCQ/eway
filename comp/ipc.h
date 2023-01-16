@@ -14,6 +14,6 @@ int init_socket (struct server* server);
 
 int ipc_queue_write(char* to_write, int len);
 
-int ipc_inform_create(eway_id_t id, const char* name);
+int ipc_inform_create(int id, const char* name);
 
-int ipc_inform_destroy(eway_id_t id);
+int ipc_inform_destroy(int id);

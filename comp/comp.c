@@ -54,7 +54,10 @@ int main(int argc, char** argv) {
     wlr_log(WLR_ERROR, "init error, stopping");
     return EXIT_FAILURE;
   }
-  
+
+  if (startup_cmd == NULL) {
+    startup_cmd = "emacs --eval=\"(when (load-file \\\"~/Desktop/eway/eway.el\\\") (eway-init-socket))\"";
+  }
   if (startup_cmd != NULL) {
     if (fork() == 0) {
       execl("/bin/sh", "/bin/sh", "-c", startup_cmd, (void*) NULL);

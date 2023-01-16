@@ -42,8 +42,9 @@ int ipc_parse(char* line) {
      end. Attempt to match it with one of the expected requests on the
      ipc socket and perfom said request. Will do a single pass and
      consume tokens along the way. */
+  wlr_log(WLR_DEBUG, "%s", line);
   enum socket_request type;
-  eway_id_t id;
+  int id;
   int args[4];
 
   int token_number = 0;
@@ -59,13 +60,13 @@ int ipc_parse(char* line) {
     char* start = line + last_space + 1;
     if (token_number == 0) {
       /* determine request type */
-      if (strcmp(start, "REBOX")) {
+      if (!strcmp(start, "REBOX")) {
 	type = REBOX;
-      } else if (strcmp(start, "CLOSE")) {
+      } else if (!strcmp(start, "CLOSE")) {
 	type = CLOSE;
-      } else if (strcmp(start, "HIDE")) {
+      } else if (!strcmp(start, "HIDE")) {
 	type = HIDE;
-      } else if (strcmp(start, "RELEASE")) {
+      } else if (!strcmp(start, "RELEASE")) {
 	type = RELEASE;
       } else {
 	wlr_log(WLR_ERROR, "Unknown IPC request: %S", start);
@@ -77,11 +78,12 @@ int ipc_parse(char* line) {
 	wlr_log(WLR_ERROR, "ipc request reported id zero. Could it be malformed?");
 	return -1;
       }
-      id = (eway_id_t) tmp;
+      id = (int) tmp;
     } else {
       args[token_number - 2] = atoi(start);
     }
-
+    last_space = idx;
+    token_number++;
     idx++;
   }
 
@@ -92,11 +94,15 @@ int ipc_parse(char* line) {
     break;
   case CLOSE:
     close_view(id);
+    break;
   case HIDE:
     hide_view(id);
+    break;
   case RELEASE:
     focus_view(id);
+    break;
   default:
+    break;
   }
 }
 
@@ -104,31 +110,38 @@ int ipc_attempt_parse () {
   /* check if the contents of the read line have a compelete request
      as a prefix, and if so handle it */
   int idx = 0;
-  while (idx < ipc_read_buffer_length &&
+  int valid_len = (client_read_start > client_read_end)?
+    ((ipc_read_buffer_length - client_read_start) + client_read_end) : (client_read_end - client_read_start);
+  while (idx < valid_len &&
 	 client_read_buffer[(client_read_start + idx) % ipc_read_buffer_length] != '\n') idx++;
   
-  if (idx == ipc_read_buffer_length) {
+  if (idx == valid_len) {
     /* line isn't finished */
+    /* should this be end - start instead? */
     return 0;
   }
 
   /* check what line it is, and remove it from the read line */
-  char* to_parse = malloc(idx); /* replace the \n with a null */
-  if (idx < client_read_start) {
+  char* to_parse = malloc(idx+1); /* replace the \n with a null */
+  if (idx > ipc_read_buffer_length - client_read_start) {
     /* split line */
     int first = ipc_read_buffer_length - client_read_start;
     memcpy(to_parse, client_read_buffer + client_read_start, first);
-    memcpy(to_parse + first, client_read_buffer, idx - first);
-    to_parse[idx-1] = 0;
+    memcpy(to_parse + first, client_read_buffer, idx + 1 - first);
+    to_parse[idx] = 0;
   } else {
-    memcpy(to_parse, client_read_buffer + client_read_start, idx);
-    to_parse[idx-1] = 0;
+    memcpy(to_parse, client_read_buffer + client_read_start, idx+1);
+    to_parse[idx] = 0;
   }
+
+  /* update the ends of the circular queue */
+  client_read_start = (client_read_start + idx + 1) % ipc_read_buffer_length;
 
   /* string is linear and has a null terminator, proceed to parsing */
   int ret_val = ipc_parse(to_parse);
   free(to_parse);
-  return ret_val;
+  return (ret_val)? ret_val : ipc_attempt_parse();
+  /* stop if there is an error, otherwise recurse to catch multiple requests in one readable event */
 }
 
 int ipc_queue_write(char* to_write, int len) {
@@ -351,7 +364,7 @@ int init_socket (struct server* server) {
 }
 
 
-int ipc_inform_create (eway_id_t id, const char* name) {
+int ipc_inform_create (int id, const char* name) {
   /* inform the other side of the pipe that a new surface has been created */
   char msg[256];
   int len = snprintf(msg, 256, "NEW %d %s\n", id, name);
@@ -362,7 +375,7 @@ int ipc_inform_create (eway_id_t id, const char* name) {
   return ipc_queue_write(msg, len);
 }
 
-int ipc_inform_destroy (eway_id_t id) {
+int ipc_inform_destroy (int id) {
   /* inform the other side of the pipe that the surface with said id should no longer be considered extant */
   char msg[256];
   int len = snprintf(msg, 256, "DESTROY %d\n", id);

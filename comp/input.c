@@ -103,7 +103,6 @@ void keyboard_handle_key (struct wl_listener *listener, void *data) {
   if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
     /* only trigger on downstroke */
     for (int i = 0; i < nsyms; i++) {
-      wlr_log(WLR_DEBUG, "key down: %d, focus: %d", syms[i], server->seat->keyboard_state.focused_surface);
       handled = handle_keybinding(server, modifiers, syms[i]);
     }
   }

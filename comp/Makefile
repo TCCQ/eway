@@ -30,9 +30,10 @@ xdg-shell-protocol.h:
 comp.o: comp.c server.h
 input.o: input.c input.h server.h
 ipc.o: ipc.c server.h ipc.h
-server.o: server.c server.h input.h xdg-shell.h ipc.h
-xdg-shell.o: xdg-shell.c server.h
-comp: comp.o input.o ipc.o server.o xdg-shell.o
+id.o: id.c id.h
+server.o: server.c server.h input.h xdg-shell.h ipc.h id.h
+xdg-shell.o: xdg-shell.c server.h id.h
+comp: comp.o input.o ipc.o id.o server.o xdg-shell.o
 
 clean:
 	rm -f comp *.o
