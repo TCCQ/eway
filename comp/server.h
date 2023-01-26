@@ -1,6 +1,28 @@
 #ifndef EWAY_SERVER
 #define EWAY_SERVER
 #include <wayland-server-core.h>
+#include <stdbool.h>
+
+struct view {
+  /* I guess this is a higher level wrapper for a surface? between a
+     surface and a shell or something else */
+  struct wl_list link;
+  struct server *server;
+  struct wlr_xdg_toplevel *xdg_toplevel;
+  struct wlr_scene_tree *scene_tree;
+  struct wl_listener map; 	/* show this view */
+  struct wl_listener unmap; 	/* hide this view */
+  struct wl_listener destroy; 	/* we are done */
+
+  /* things xdg can request basically. May not be respected */
+  struct wl_listener request_move;
+  struct wl_listener request_resize;
+  struct wl_listener request_maximize;
+  struct wl_listener request_fullscreen;
+
+  int id; 			/* for socket communication */
+};
+
 struct server {
   struct wl_display *display;	/* talk with the comp */
   struct wlr_backend *backend; 	/* how are we rendering pixels */
@@ -43,31 +65,21 @@ struct output {
   struct wl_list link; 		/* (?) */
   struct server *server; 	/* what server is this output associated with */
   struct wlr_output *wlr; 	/* (?) */
-  struct wlr_scene_output *scene_output; /* (?) */
+  struct wlr_scene_output *scene_output; /* what part of the scene does this output cover */
 
   struct wl_listener frame; 	/* called when the output (monitor) is ready to draw again (refresh rate) */
   struct wl_listener request_state; /* called when mode changes */
   struct wl_listener destroy;	    
 };
 
-struct view {
-  /* I guess this is a higher level wrapper for a surface? between a
-     surface and a shell or something else */
-  struct wl_list link;
-  struct server *server;
-  struct wlr_xdg_toplevel *xdg_toplevel;
-  struct wlr_scene_tree *scene_tree;
-  struct wl_listener map; 	/* show this view */
-  struct wl_listener unmap; 	/* hide this view */
-  struct wl_listener destroy; 	/* we are done */
-  int id; 			/* for socket communication */
-};
 
 int server_init (struct server* server);
 
 void server_cleanup (struct server* server);
 
-/* emacs ipc stuff, called from ipc.c but needs to see the internal state of the server */
+struct view* validate (int id);
+
+bool allow_manage(int id);
 
 int resize_translate_view(int id, int x, int y, int width, int height);
 

@@ -17,6 +17,11 @@
 #include "ipc.h"
 
 
+/* this is ugly and imo bad practice, but I don't really see an
+   alternative given the scoping nature of event callbacks. */
+struct server *connected_server;
+
+
 int ipc_fd, connection_fd = -1;
 struct wl_event_source *client_event_source = NULL;
 
@@ -36,6 +41,9 @@ socklen_t addr_len;
 struct wl_listener ipc_display_destroy;
 struct wl_event_source *ipc_event_source = NULL;
 const char* DEFAULT_SOCK_ADDR = "/home/tmu/ewaySock";
+
+/* quick forward def */
+void ipc_client_disconnect(void);
 
 int ipc_parse(char* line) {
   /* line is null terminated and does not have a \n at the
@@ -68,11 +76,13 @@ int ipc_parse(char* line) {
 	type = HIDE;
       } else if (!strcmp(start, "RELEASE")) {
 	type = RELEASE;
+      } else if (!strcmp(start, "QUIT")) {
+	type = QUIT;
       } else {
 	wlr_log(WLR_ERROR, "Unknown IPC request: %S", start);
 	return -1;
       }
-    } else if (token_number == 1){
+    } else if (token_number == 1 && type != QUIT){
       tmp = atoi(start);
       if (tmp == 0) {
 	wlr_log(WLR_ERROR, "ipc request reported id zero. Could it be malformed?");
@@ -100,6 +110,10 @@ int ipc_parse(char* line) {
     break;
   case RELEASE:
     focus_view(id);
+    break;
+  case QUIT:
+    ipc_client_disconnect();
+    wl_display_terminate(connected_server->display);
     break;
   default:
     break;
@@ -150,17 +164,29 @@ int ipc_queue_write(char* to_write, int len) {
     return -1;
   }
 
-  if ((client_write_end - client_write_start) + len > ipc_write_buffer_length) {
-    wlr_log(WLR_ERROR, "Queuing write would overflow buffer");
+  ssize_t written;
+  do {
+    written = write(connection_fd, to_write, len);
+  } while (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
+  if (written == -1) {
+    wlr_log(WLR_ERROR, "Could not write to ipc socket");
     return -1;
   }
-
-  int i = client_write_end;
-  for (int n = 0; n < len; n++) {
-    client_write_buffer[(i + n) % ipc_write_buffer_length] = to_write[n];
-  }
-  client_write_end = (client_write_end + len) % ipc_write_buffer_length;
   return 0;
+
+  /*
+   * if ((client_write_end - client_write_start) + len > ipc_write_buffer_length) {
+   *   wlr_log(WLR_ERROR, "Queuing write would overflow buffer");
+   *   return -1;
+   * }
+   * 
+   * int i = client_write_end;
+   * for (int n = 0; n < len; n++) {
+   *   client_write_buffer[(i + n) % ipc_write_buffer_length] = to_write[n];
+   * }
+   * client_write_end = (client_write_end + len) % ipc_write_buffer_length;
+   * return 0;
+   */
 }
 
 void ipc_on_display_destroy (struct wl_listener *listener, void *data) {
@@ -221,59 +247,61 @@ int ipc_client_handle_readable (int client_fd, uint32_t mask, void *data) {
   }
 }
 
-int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
-  if (client_write_start == client_write_end) {
-    /* nothing to write */
-    return 0;
-  } else if (client_write_start > client_write_end) {
-    /* requires a loop, split into two writes*/
-    ssize_t written = write(client_fd, client_write_buffer + client_write_start,
-			    ipc_write_buffer_length - client_write_start);
-    if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      /* would block, give up */
-      return 0;
-    } else if (written == -1) {
-      /* other error */
-      wlr_log(WLR_ERROR, "Could not write to ipc socket");
-      return -1;
-    }
-      
-    client_write_start = (client_write_start + written) % ipc_write_buffer_length;
-    if (client_write_start != 0) {
-      /* didn't completely finish first write, not safe to start
-	 second currently. leave the remains for the next time */
-      return 0;
-    }
-      
-    /* do the second half starting from the beginning of the queue */
-    written = write(client_fd, client_write_buffer, client_write_end);
-    if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      /* would block, give up */
-      return 0;
-    } else if (written == -1) {
-      /* other error */
-      wlr_log(WLR_ERROR, "Could not write to ipc socket");
-      return -1;
-    }
-
-    client_write_start = written;
-    return 0;
-  }
-
-
-  ssize_t written = write(client_fd, client_write_buffer + client_write_start, client_write_end - client_write_start);
-  if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-    /* would block, ignore and retry later */
-    return 0;
-  } else if (written == -1) {
-    wlr_log(WLR_ERROR, "Could not write to ipc socket");
-    return -1;
-  }
-
-  client_write_start = (client_write_start + written) % ipc_write_buffer_length;
-  
-  
-}
+/*
+ * int ipc_client_handle_writable (int client_fd, uint32_t mask, void *data) {
+ *   if (client_write_start == client_write_end) {
+ *     /\* nothing to write *\/
+ *     return 0;
+ *   } else if (client_write_start > client_write_end) {
+ *     /\* requires a loop, split into two writes*\/
+ *     ssize_t written = write(client_fd, client_write_buffer + client_write_start,
+ * 			    ipc_write_buffer_length - client_write_start);
+ *     if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+ *       /\* would block, give up *\/
+ *       return 0;
+ *     } else if (written == -1) {
+ *       /\* other error *\/
+ *       wlr_log(WLR_ERROR, "Could not write to ipc socket");
+ *       return -1;
+ *     }
+ *       
+ *     client_write_start = (client_write_start + written) % ipc_write_buffer_length;
+ *     if (client_write_start != 0) {
+ *       /\* didn't completely finish first write, not safe to start
+ * 	 second currently. leave the remains for the next time *\/
+ *       return 0;
+ *     }
+ *       
+ *     /\* do the second half starting from the beginning of the queue *\/
+ *     written = write(client_fd, client_write_buffer, client_write_end);
+ *     if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+ *       /\* would block, give up *\/
+ *       return 0;
+ *     } else if (written == -1) {
+ *       /\* other error *\/
+ *       wlr_log(WLR_ERROR, "Could not write to ipc socket");
+ *       return -1;
+ *     }
+ * 
+ *     client_write_start = written;
+ *     return 0;
+ *   }
+ * 
+ * 
+ *   ssize_t written = write(client_fd, client_write_buffer + client_write_start, client_write_end - client_write_start);
+ *   if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+ *     /\* would block, ignore and retry later *\/
+ *     return 0;
+ *   } else if (written == -1) {
+ *     wlr_log(WLR_ERROR, "Could not write to ipc socket");
+ *     return -1;
+ *   }
+ * 
+ *   client_write_start = (client_write_start + written) % ipc_write_buffer_length;
+ *   
+ *   
+ * }
+ */
 
 int ipc_client_handle_event(int client_fd, uint32_t mask, void *data) {
   if (mask & WL_EVENT_ERROR) {
@@ -288,9 +316,12 @@ int ipc_client_handle_event(int client_fd, uint32_t mask, void *data) {
 
   if (mask & WL_EVENT_READABLE) {
     return ipc_client_handle_readable(client_fd, mask, data);
-  } else if (mask & WL_EVENT_WRITABLE) {
-    return ipc_client_handle_writable(client_fd, mask, data);
   }
+  /*
+   * else if (mask & WL_EVENT_WRITABLE) {
+   *   return ipc_client_handle_writable(client_fd, mask, data);
+   * }
+   */
   return 0;
 }
 
@@ -314,12 +345,18 @@ int ipc_handle_connection (int fd, uint32_t mask, void *data) {
   }
   
   connection_fd = client_fd;
-  client_event_source = wl_event_loop_add_fd(server->wl_event_loop, client_fd, WL_EVENT_READABLE | WL_EVENT_WRITABLE, ipc_client_handle_event, NULL);
+  client_event_source = wl_event_loop_add_fd(server->wl_event_loop, client_fd, WL_EVENT_READABLE,
+					     /* | WL_EVENT_WRITABLE, */
+					     ipc_client_handle_event, NULL);
   /* callback for input from the other side of the socket. currently passes no user data */
   return 0;
 }
 
 int init_socket (struct server* server) {
+
+  /* save me time when debugging */
+  unlink(DEFAULT_SOCK_ADDR);
+  
   if ((ipc_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)) < 0) {
     wlr_log(WLR_ERROR, "Could not create a ipc socket");
     return -1;
@@ -354,7 +391,9 @@ int init_socket (struct server* server) {
   ipc_display_destroy.notify = ipc_on_display_destroy;
   wl_display_add_destroy_listener(server->display, &ipc_display_destroy);
   ipc_event_source = wl_event_loop_add_fd(server->wl_event_loop, ipc_fd, WL_EVENT_READABLE | WL_EVENT_WRITABLE, ipc_handle_connection, server);
-    
+
+
+  connected_server = server;
   /* socket is setup. ipc_handle_connection will be automatically
      called when an accepted conenction is made. One should check
      that client_fd is not -1 before trying to do anything with it,
@@ -362,7 +401,6 @@ int init_socket (struct server* server) {
     
   return 0;
 }
-
 
 int ipc_inform_create (int id, const char* name) {
   /* inform the other side of the pipe that a new surface has been created */
@@ -384,4 +422,15 @@ int ipc_inform_destroy (int id) {
     return -1;
   }
   return ipc_queue_write(msg, len);
+}
+
+int ipc_request_focus(int id) {
+  /* request that focus go to the indicated id */
+  char msg[256];
+  int len = snprintf(msg, 256, "FOCUS %d\n", id);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in ipc_request_focus call");
+    return -1;
+  }
+  return ipc_queue_write(msg, len);  
 }

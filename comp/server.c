@@ -2,6 +2,7 @@
 
 #include <time.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
@@ -99,7 +100,12 @@ void server_handle_new_output (struct wl_listener *listener, void *data) {
   wlr_output_layout_add_auto(server->output_layout, wlr_output);
 }
 
-/* interal use stuff */
+
+/* publicly visible stuff */
+
+/* server internals for responding to requests via the socket and
+   initialization */
+
 struct view* validate (int id) {
   struct view* passed = id_get(id);
   if (!passed) {
@@ -117,9 +123,13 @@ struct view* validate (int id) {
    */
 }
 
-/* publicly visible stuff: Init and requests */
-
-/* server internals for responding to requests via the socket */
+bool allow_manage(int id) {
+  /* should this view be allowed to manage itself? (for size changes and whatnot) */
+  /* later this should be more sophisticated, (basically check if this
+     is an emacs frame or not), for now it will just check if this is
+     the base view */
+  return id == 0;
+}
 
 int resize_translate_view(int id, int x, int y, int width, int height) {
   wlr_log(WLR_DEBUG, "resize requested %d %d %d %d %d", id, x, y, width, height);
@@ -137,16 +147,49 @@ int resize_translate_view(int id, int x, int y, int width, int height) {
 
 int close_view(int id) {
   wlr_log(WLR_DEBUG, "close req %d", id);
+  /* based on rootston */
+  struct view *view = validate(id);
+  if (!view) {
+    return -1;
+  }
+  struct wlr_xdg_surface *xdg_surface = view->xdg_toplevel->base;
+  struct wlr_xdg_popup *popup = NULL;
+  wl_list_for_each(popup, &xdg_surface->popups, link) {
+    wlr_xdg_popup_destroy(popup);
+  }
+  wlr_xdg_toplevel_send_close(view->xdg_toplevel);
+
+  wl_list_remove(&view->map.link);
+  wl_list_remove(&view->unmap.link);
+  wl_list_remove(&view->destroy.link);
+  /*
+   * wl_list_remove(&view->link);
+   */
+  id_free(view->id);
+  free(view);
   return 0;
 }
 
 int hide_view(int id) {
   wlr_log(WLR_DEBUG, "hide req %d", id);
+  struct view *view = validate(id);
+  if (!view) {
+    return -1;
+  }
+
+  wlr_scene_node_lower_to_bottom(&view->scene_tree->node);
   return 0;
 }
 
 int focus_view(int id) {
   wlr_log(WLR_DEBUG, "focus req %d", id);
+  struct view *view = validate(id);
+  if (!view) {
+    return -1;
+  }
+
+  wlr_scene_node_raise_to_top(&view->scene_tree->node);
+  keyboard_focus_to_view(view, view->xdg_toplevel->base->surface);
   return 0;
 }
 

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200112L
 #include <assert.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_input_device.h>
@@ -18,9 +19,29 @@
 
 #include "input.h"
 #include "server.h"
+#include "id.h"
+#include "ipc.h"
 /*
  * input stuff. stolen from tinywl
  */
+
+void focus_base(void) {
+  /* reset focus back to the base window (emacs) */
+  /* later I would like this to be per monitor, but for now it will just go to the starting emacs frame */
+  /* this means you can't / shouldn't close the first frame of emacs */
+  struct view* view = validate(0); /* first thing that opened */
+  if (!view) {
+    wlr_log(WLR_ERROR, "Couldn't get the base view");
+      return;
+  }
+
+  keyboard_focus_to_view(view, view->xdg_toplevel->base->surface);
+}
+
+void raise_view(struct view *view) {
+  wlr_scene_node_raise_to_top(&view->scene_tree->node);
+  ipc_request_focus(view->id);
+}
 
 void keyboard_focus_to_view (struct view *view, struct wlr_surface *surface) {
   if (view == NULL) {
@@ -41,12 +62,11 @@ void keyboard_focus_to_view (struct view *view, struct wlr_surface *surface) {
     wlr_xdg_toplevel_set_activated(previous->toplevel, false);
   }
   struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat);
-  /* raise view */
-  wlr_scene_node_raise_to_top(&view->scene_tree->node);
-  wl_list_remove(&view->link);
-  wl_list_insert(&server->views, &view->link);
-  /* not really sure what is happening here ^ */
+  /* I will no longer raise view, on focus. Do it seperatly */
   wlr_xdg_toplevel_set_activated(view->xdg_toplevel, true);
+  wl_list_remove(&view->link);
+  wl_list_insert(&view->server->views, &view->link);
+  /* not really sure what is happening here ^ List reordering? */  
   /* wlroots will automatically forward key inputs elsewhere */
   if (keyboard) {
     wlr_seat_keyboard_notify_enter(seat, view->xdg_toplevel->base->surface,
@@ -64,7 +84,7 @@ void keyboard_handle_modifiers (struct wl_listener *listener, void *data) {
 }
 
 bool handle_keybinding (struct server *server, uint32_t modifiers, xkb_keysym_t sym) {
-  /* should the compositor consume this keystroke? if so, do the action */
+  /* returns if the keystroke is consumed. Performs additional actions as necessary */
   if (modifiers & WLR_MODIFIER_ALT) {
     switch (sym) {
     case XKB_KEY_Escape:
@@ -77,6 +97,12 @@ bool handle_keybinding (struct server *server, uint32_t modifiers, xkb_keysym_t 
 	keyboard_focus_to_view(next_view, next_view->xdg_toplevel->base->surface);
       }
       return true;
+      
+    case XKB_KEY_o:
+    case XKB_KEY_x:
+      /* passthrough to base */
+      focus_base();
+      return false;
     default:
       return false;
     }

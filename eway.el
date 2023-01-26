@@ -7,7 +7,8 @@
   (add-hook 'window-size-change-functions 'eway--buffer-window-resize 0 t)
   (add-hook 'window-selection-change-functions 'eway--buffer-window-selection 0 t)
   (add-hook 'window-configuration-change-hook 'eway--buffer-window-change 0 nil)
-  (add-hook 'window-state-change-hook 'eway--ensure-window-unqiueness 0 nil))
+  (add-hook 'window-state-change-hook 'eway--ensure-window-unqiueness 0 nil)
+  (add-hook 'kill-emacs-hook 'eway--quit 0 nil))
 
 
 ;; open a standing IPC socket with "make-network-process"
@@ -52,9 +53,9 @@
 	  ((string= (car parts) "DESTROY")
 	   (let* ((id (string-to-number (car (cdr parts)))))
 	     (eway--destroy id)))
-	  ;; eventually have focus shifts that don't go through emacs
-	  ;; ((string = (car parts) "FOCUS")
-	   ;; (eway--change-focus (car (cdr parts))))
+	  ((string= (car parts) "FOCUS")
+	   (let* ((id (string-to-number (car (cdr parts)))))
+	     (eway--change-focus id)))
 	  (t
 	   (message "Unrecognized ipc request: %S" parts)))))
 
@@ -90,7 +91,8 @@
       ;; since eway-WM-id is always buffer local, we can just set it normally
       (eway-mode)
       (setq eway-WM-id id)
-      (setq eway--WM-window-plist (plist-put eway--WM-window-plist id buffer)))))
+      (setq eway--WM-window-plist (plist-put eway--WM-window-plist id buffer)))
+    buffer))
 
 (defun eway--get-WM-id (&optional buffer)
   "get the WM-id associated with the passed (or current) buffer."
@@ -103,8 +105,8 @@
 
 (defun eway--pass-message (msg)
   "wrapper for communicating with the compositor process"
-  (let ((minibuffer-message-timeout 0))
-    (message "Sent %s" msg))
+  ;; (let ((minibuffer-message-timeout 0))
+    ;; (message "Sent %s" msg))
   (process-send-string eway--socket msg))
 
 (defun eway--release-focus ()
@@ -114,8 +116,11 @@
       (when id
 	(eway--pass-message (format "RELEASE %d\n" id))))))
 
-;; (defun eway--change-focus (id)
-  ;; "reaction to focus change from comp process. Called when moving directly between ")
+(defun eway--change-focus (id)
+  "reaction to focus change from comp process. Seems like I specifically need inform resize"
+  (let ((buf (eway--eway-buffer-from-WM-id id)))
+    (switch-to-buffer buf)
+    (eway--inform-resize-translate buf)))
 
 ;; shouldn't have to explictly deal with focus passing from the comp /
 ;; other applications back to emacs. emacs will just see new
@@ -130,7 +135,13 @@
   
   (with-current-buffer buffer 
     (when (eq major-mode 'eway-mode)
-      (window-edges (get-buffer-window) nil t t))))
+      (let* ((we (window-edges (get-buffer-window) nil t t))
+	    (r-b (seq-drop we 2))
+	    (right (car r-b))
+	    (bottom (car (cdr r-b))))
+	(setf (car (cdr (cdr we))) (- right (car we)))
+	(setf (car (cdr (cdr (cdr we)))) (- bottom (car (cdr we)) (window-mode-line-height (get-buffer-window))))
+	we))))
 
 (defun eway--inform-hide (buffer)
   "tells the comp process to make the passed buffer/window invisible"
@@ -158,6 +169,10 @@
     (when (eq major-mode 'eway-mode)
       (let ((id (eway--get-WM-id)))
 	(eway--pass-message (format "CLOSE %d\n" id))))))
+
+(defun eway--inform-quit ()
+  "tell the compositor that it should quit"
+  (eway--pass-message "QUIT\n"))
 
 ;; hooks and whatnot below
 
@@ -200,6 +215,10 @@
   (let ((id (eway--get-WM-id (current-buffer))))
     (eway--inform-close (current-buffer))
     (setq eway--WM-window-plist (org-plist-delete eway--WM-window-plist id))))
+
+(defun eway--quit ()
+  "hook function for killing the whole emacs process"
+  (eway--inform-quit))
 
 (defun eway--ensure-window-unqiueness ()
   "make sure every eway buffer is only visible in one place"

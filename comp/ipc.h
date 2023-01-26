@@ -7,7 +7,8 @@ enum socket_request {
   REBOX,
   CLOSE,
   HIDE,
-  RELEASE
+  RELEASE,
+  QUIT
 };
 
 int init_socket (struct server* server);
@@ -17,3 +18,5 @@ int ipc_queue_write(char* to_write, int len);
 int ipc_inform_create(int id, const char* name);
 
 int ipc_inform_destroy(int id);
+
+int ipc_request_focus(int id);

@@ -10,6 +10,8 @@ struct keyboard {
   struct wl_listener destroy;
 };
 
+void raise_view(struct view *view);
+
 void keyboard_focus_to_view (struct view* view, struct wlr_surface* surface);
 
 void server_init_input (struct server* server);

@@ -1,5 +1,6 @@
 *~
 *.o
+*gmon.out
 wlroots
 cage
 *TAG*

@@ -7,7 +7,7 @@ LIBS=\
 	 $(shell pkg-config --cflags --libs xkbcommon)
 
 CC=gcc
-CFLAGS=-g -Werror -I. -DWLR_USE_UNSTABLE ${LIBS} -lc
+CFLAGS=-g -pg -Werror -I. -DWLR_USE_UNSTABLE ${LIBS} -lc
 LDFLAGS=${CFLAGS}
 LDLIBS=${LIBS}
 
@@ -36,7 +36,7 @@ xdg-shell.o: xdg-shell.c server.h id.h
 comp: comp.o input.o ipc.o id.o server.o xdg-shell.o
 
 clean:
-	rm -f comp *.o
+	rm -f comp *.o gmon.out
 
 .DEFAULT_GOAL=comp
 

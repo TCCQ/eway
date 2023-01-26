@@ -26,6 +26,7 @@ void xdg_toplevel_map (struct wl_listener *listener, void *data) {
 
   /* focus? */
   keyboard_focus_to_view(view, view->xdg_toplevel->base->surface);
+  ipc_request_focus(view->id);
 }
 
 void xdg_toplevel_unmap (struct wl_listener *listener, void *data) {
@@ -41,12 +42,65 @@ void xdg_toplevel_destroy (struct wl_listener *listener, void *data) {
   wl_list_remove(&view->unmap.link);
   wl_list_remove(&view->destroy.link);
 
+  wl_list_remove(&view->request_move.link);
+  wl_list_remove(&view->request_resize.link);
+  wl_list_remove(&view->request_maximize.link);
+  wl_list_remove(&view->request_fullscreen.link);
+  
   /* inform the other side of the socket about something closing */
   if (ipc_inform_destroy(view->id)) {
-    wlr_log(WLR_ERROR, "Encountered some problem during inform_destor");
+    wlr_log(WLR_ERROR, "Encountered some problem during inform_destroy");
   }
-
+  
+  id_free(view->id);
   free(view);
+}
+
+void xdg_toplevel_request_move (struct wl_listener *listener, void *data) {
+  /* not sure what to do here (tinywl starts interactive mouse
+     move). This is for mouse dragging, or other user intereaction
+     movement. We don't need that */
+  return;
+}
+
+void xdg_toplevel_request_resize (struct wl_listener *listener, void *data) {
+  /* same as move */
+  return;
+}
+
+void xdg_toplevel_request_maximize (struct wl_listener *listener, void *data) {
+  /* we need to get the output dimmentions, for which we need the output */
+  struct view* view = wl_container_of(listener, view, request_maximize);
+  struct server* server = view->server;
+
+  /* I need to identify which output I want to fill, then get the
+     layout coords of that output and it's size. Then readjust the
+     given view to match
+
+    I really don't get how scene graph stuff is supposed to
+    work. Seems like siblings can be rendered above / below one
+    another. I get that there is some higherarchy so that you can move
+    a surface and its decorations around together for example, but the
+    layering of the tree is not clear. Maybe each node generalizes
+    it's children into a layergroup that can't be interleaved by
+    non-decndents of that node? I will work with that
+    assumption. Furthermore, outputs are collected at the top. I guess
+    then output x/y is absolute. */
+
+  struct output* output = wl_container_of(server->outputs.next, output, link);
+  struct wlr_box box;
+  box.x = output->scene_output->x;
+  box.y = output->scene_output->y;
+  wlr_output_effective_resolution(output->wlr, &box.width, &box.height);
+
+  /* box is set */
+  wlr_scene_node_set_position(&view->scene_tree->node, box.x, box.y); /* should hopefully move the whole view */
+  wlr_xdg_toplevel_set_size(view->xdg_toplevel, box.width, box.height);
+}
+
+void xdg_toplevel_request_fullscreen (struct wl_listener *listener, void *data) {
+  /* similar to maximized but nothing can be in front of it */
+  return; 
 }
 
 void server_new_xdg_surface (struct wl_listener *listener, void *data) {
@@ -85,13 +139,26 @@ void server_new_xdg_surface (struct wl_listener *listener, void *data) {
   view->destroy.notify = xdg_toplevel_destroy;
   wl_signal_add(&xdg_surface->events.destroy, &view->destroy);
 
+  struct wlr_xdg_toplevel* toplevel = xdg_surface->toplevel;
+  view->request_move.notify = xdg_toplevel_request_move;
+  wl_signal_add(&toplevel->events.request_move, &view->request_move);
+  view->request_resize.notify = xdg_toplevel_request_resize;
+  wl_signal_add(&toplevel->events.request_resize, &view->request_resize);
+  view->request_maximize.notify = xdg_toplevel_request_maximize;
+  wl_signal_add(&toplevel->events.request_maximize, &view->request_maximize);
+  view->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
+  wl_signal_add(&toplevel->events.request_fullscreen, &view->request_fullscreen);
+  
   /* tell the other side of the socket about this new surface */
   if (ipc_inform_create(view->id, "testing")) {
-    wlr_log(WLR_ERROR, "encounterd some problem during inform_create");
+    wlr_log(WLR_ERROR, "encountered some problem during inform_create");
   }
 
   /* keyboard_focus_to_view(view, xdg_surface->surface); */
+  
 }
+
+/* decorations */
 
 void xdg_decoration_handle_destroy (struct wl_listener *listener, void *data) {
   struct xdg_decoration *xdg_decoration = wl_container_of(listener, xdg_decoration, destroy);
@@ -150,6 +217,8 @@ void server_new_xdg_toplevel_decoration (struct wl_listener *listener, void *dat
   xdg_decoration_handle_request_mode(&xdg_decoration->request_mode, wlr_decoration);
   xdg_decoration_enforce_csd_mode(xdg_decoration, false);
 }
+
+/* init */
 
 int server_init_xdg_shell (struct server* server) {
   server->xdg_shell = wlr_xdg_shell_create(server->display, 3); 
