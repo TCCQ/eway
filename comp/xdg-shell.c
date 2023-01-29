@@ -46,6 +46,9 @@ void xdg_toplevel_destroy (struct wl_listener *listener, void *data) {
   wl_list_remove(&view->request_resize.link);
   wl_list_remove(&view->request_maximize.link);
   wl_list_remove(&view->request_fullscreen.link);
+
+  wl_list_remove(&view->set_title.link);
+  wl_list_remove(&view->set_app_id.link);
   
   /* inform the other side of the socket about something closing */
   if (ipc_inform_destroy(view->id)) {
@@ -103,6 +106,35 @@ void xdg_toplevel_request_fullscreen (struct wl_listener *listener, void *data) 
   return; 
 }
 
+void xdg_toplevel_set_title (struct wl_listener *listener, void *data) {
+  struct view *view = wl_container_of(listener, view, set_title);
+  int idx = 0;
+  char* source = view->xdg_toplevel->title;
+  while (idx < 256) {
+    if ((view->title[idx] = source[idx]) != 0) {
+      idx++;
+    } else {
+      break;
+    }
+  }
+  /* surely there is a library function for this but I can't find it */
+  ipc_inform_title(view->id, view->title);
+}
+
+void xdg_toplevel_set_app_id (struct wl_listener *listener, void *data) {
+  struct view *view = wl_container_of(listener, view, set_app_id);
+  int idx = 0;
+  char* source = view->xdg_toplevel->app_id;
+  while (idx < 256) {
+    if ((view->app_id[idx] = source[idx]) != 0) {
+      idx++;
+    } else {
+      break;
+    }
+  }
+  ipc_inform_app_id(view->id, view->app_id);
+}
+
 void server_new_xdg_surface (struct wl_listener *listener, void *data) {
   /* raised when a client requests a new xdg surface */
   struct server *server = wl_container_of(listener, server, new_xdg_surface);
@@ -130,6 +162,8 @@ void server_new_xdg_surface (struct wl_listener *listener, void *data) {
     wlr_log(WLR_ERROR, "Error with id allocation");
     return;
   }
+  *view->title = 0;
+  *view->app_id = 0; 		/* these are updated as callbacks, can't force I don't think */
 
   /* set listeners */
   view->map.notify = xdg_toplevel_map;
@@ -148,14 +182,18 @@ void server_new_xdg_surface (struct wl_listener *listener, void *data) {
   wl_signal_add(&toplevel->events.request_maximize, &view->request_maximize);
   view->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
   wl_signal_add(&toplevel->events.request_fullscreen, &view->request_fullscreen);
+
+  view->set_title.notify = xdg_toplevel_set_title;
+  wl_signal_add(&toplevel->events.set_title, &view->set_title);
+  view->set_app_id.notify = xdg_toplevel_set_app_id;
+  wl_signal_add(&toplevel->events.set_app_id, &view->set_app_id);
   
   /* tell the other side of the socket about this new surface */
-  if (ipc_inform_create(view->id, "testing")) {
+  if (ipc_inform_create(view->id)) {
     wlr_log(WLR_ERROR, "encountered some problem during inform_create");
   }
 
   /* keyboard_focus_to_view(view, xdg_surface->surface); */
-  
 }
 
 /* decorations */

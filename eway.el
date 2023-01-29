@@ -8,26 +8,23 @@
   (add-hook 'window-selection-change-functions 'eway--buffer-window-selection 0 t)
   (add-hook 'window-configuration-change-hook 'eway--buffer-window-change 0 nil)
   (add-hook 'window-state-change-hook 'eway--ensure-window-unqiueness 0 nil)
-  (add-hook 'kill-emacs-hook 'eway--quit 0 nil))
-
-
-;; open a standing IPC socket with "make-network-process"
-;; then pass requests both ways
-
-;; we need a consistent way to refer to other stuff running under the compositor.
-;; we can't use pid because an application can have more than one windows
-;; for now the compositor will supply a number that it will inform emacs of during the creation of said application WM window
+  (add-hook 'kill-emacs-hook 'eway--quit 0 nil))					
 
 (defvar eway-WM-id nil "comp-supplied unique id for a WM-window")
 (make-variable-buffer-local 'eway-WM-id)
 (set-default 'eway-wm-id nil)
 
+;; keybinds
+(global-set-key (kbd "M-D") (lambda (cmd) (interactive "MCommand: ") (start-process cmd nil cmd)))
+
 ;; maintaining this plist requires org-plist-delete, otherwise we have
-;; a memory leak. Not a big deal but something to remember
+;; a memory leak. Not a big deal but something to remember (TODO write my own to avoid the dep)
 (defvar eway--WM-window-plist nil
   "plist mapping comp-supplied WM window id numbers with emacs buffers that represent them")
 
 (defvar eway-ipc-sock-path "/home/tmu/ewaySock" "Where to look for eway socket")
+
+(defvar eway-default-buffer-name "*untitled-eway*" "base buffer name before a name is set by user or application")
 
 (defvar eway--socket nil "socket used by an open eway process")
 
@@ -43,19 +40,29 @@
     (when buf
       (kill-buffer buf))))
 
+(defun eway--rename (id name)
+  "set the user visible name of this buffer. Can be overwritten by the user if they care. For now it will just be the app_id. This isn't know at time of creation, see wayland standard of xdg_toplevel"
+  (let ((buf (eway--eway-buffer-from-WM-id id)))
+    (with-current-buffer buf
+      (rename-buffer name))))
+
 (defun eway--parse-request ()
   "parse and fufill request in `eway--unfinished-request'"
   (let ((parts (string-split eway--unfinished-request " " t  "[ \t\n]")))
     (cond ((string= (car parts) "NEW")
-	   (let ((id (string-to-number (car (cdr parts))))
-		 (name (car (cdr (cdr parts)))))
-	     (eway--make-WM-buffer id name)))
+	   (let ((id (string-to-number (car (cdr parts)))))
+	     (eway--make-WM-buffer id)))
 	  ((string= (car parts) "DESTROY")
 	   (let* ((id (string-to-number (car (cdr parts)))))
 	     (eway--destroy id)))
 	  ((string= (car parts) "FOCUS")
 	   (let* ((id (string-to-number (car (cdr parts)))))
 	     (eway--change-focus id)))
+	  ((or (string= (car parts) "TITLE")
+	       (string= (car parts) "APPID"))
+	   (let* ((id (string-to-number (car (cdr parts))))
+		  (name (car (cdr (cdr parts)))))
+	     (eway--rename id name)))
 	  (t
 	   (message "Unrecognized ipc request: %S" parts)))))
 
@@ -84,9 +91,9 @@
 
 ;; internal functions and helpers
 
-(defun eway--make-WM-buffer (id name)
+(defun eway--make-WM-buffer (id)
   "make a buffer to represent the WM-window identified by the id. ID and name are supplied by the comp process to start,"
-  (let ((buffer (generate-new-buffer name)))
+  (let ((buffer (generate-new-buffer eway-default-buffer-name)))
     (with-current-buffer buffer
       ;; since eway-WM-id is always buffer local, we can just set it normally
       (eway-mode)
@@ -251,3 +258,5 @@
 	  (lambda (win) (set-window-buffer win "*scratch*"))
 	  (seq-drop sorted-list 1))))
      eway-bufs)))
+
+

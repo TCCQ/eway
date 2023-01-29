@@ -193,7 +193,10 @@ void ipc_on_display_destroy (struct wl_listener *listener, void *data) {
   if (ipc_event_source) {
     wl_event_source_remove(ipc_event_source);
   }
-  close(connection_fd);		/* make sure this is the right fd to close */
+  if (connection_fd != -1) {
+    close(connection_fd);		/* make sure this is the right fd to close */
+    wl_event_source_remove(client_event_source);
+  }
   unlink(address.sun_path);
   /* possible memory leak? below causes a segfault when included, but I am not sure why sway includes it at all */
   /*
@@ -402,15 +405,39 @@ int init_socket (struct server* server) {
   return 0;
 }
 
-int ipc_inform_create (int id, const char* name) {
+int ipc_inform_create (int id) {
   /* inform the other side of the pipe that a new surface has been created */
+  if (id == 0) return 0;
   char msg[256];
-  int len = snprintf(msg, 256, "NEW %d %s\n", id, name);
+  int len = snprintf(msg, 256, "NEW %d\n", id);
   if (len < 0) {
     wlr_log(WLR_ERROR, "Error in the ipc_inform_create call");
     return -1;
   } 
   return ipc_queue_write(msg, len);
+}
+
+int ipc_inform_title (int id, const char* title) {
+  /* inform the other side that someone changed their title */
+  if (id == 0) return 0;
+  char msg[256];
+  int len = snprintf(msg, 256, "TITLE %d %s\n", id, title);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in the ipc_inform_title call");
+    return -1;
+  } 
+  return ipc_queue_write(msg, len);  
+}
+
+int ipc_inform_app_id (int id, const char* app_id) {
+  /* inform the other side that someone changed their app_id */
+  char msg[256];
+  int len = snprintf(msg, 256, "APPID %d %s\n", id, app_id);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in the ipc_inform_app_id call");
+    return -1;
+  } 
+  return ipc_queue_write(msg, len);  
 }
 
 int ipc_inform_destroy (int id) {

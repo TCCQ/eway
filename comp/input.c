@@ -98,9 +98,14 @@ bool handle_keybinding (struct server *server, uint32_t modifiers, xkb_keysym_t 
       }
       return true;
       
-    case XKB_KEY_o:
-    case XKB_KEY_x:
+    default:
       /* passthrough to base */
+      focus_base();
+      return false;
+    }
+  } else if (modifiers & WLR_MODIFIER_CTRL) {
+    switch (sym) {
+    case XKB_KEY_x:
       focus_base();
       return false;
     default:

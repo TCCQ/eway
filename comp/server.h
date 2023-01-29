@@ -19,6 +19,12 @@ struct view {
   struct wl_listener request_resize;
   struct wl_listener request_maximize;
   struct wl_listener request_fullscreen;
+  
+  struct wl_listener set_title;
+  struct wl_listener set_app_id;
+
+  char title[256]; 		/* fixed length to make things easy */
+  char app_id[256];
 
   int id; 			/* for socket communication */
 };
