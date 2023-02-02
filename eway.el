@@ -7,15 +7,19 @@
   (add-hook 'window-size-change-functions 'eway--buffer-window-resize 0 t)
   (add-hook 'window-selection-change-functions 'eway--buffer-window-selection 0 t)
   (add-hook 'window-configuration-change-hook 'eway--buffer-window-change 0 nil)
-  (add-hook 'window-state-change-hook 'eway--ensure-window-unqiueness 0 nil)
-  (add-hook 'kill-emacs-hook 'eway--quit 0 nil))					
+  (add-hook 'window-state-change-hook 'eway--ensure-window-unqiueness 0 nil))					
 
-(defvar eway-WM-id nil "comp-supplied unique id for a WM-window")
-(make-variable-buffer-local 'eway-WM-id)
-(set-default 'eway-wm-id nil)
+(defvar-local eway-WM-id nil "comp-supplied unique id for a WM-window")
+(defvar-local eway-WM-title "" "comp-supplied title for this window, dynamically bound")
+(defvar-local eway-WM-appid "" "comp-suuplied appid for this window, dynamically bound")
+(defvar eway-name-format '(concat eway-WM-appid " - " eway-WM-title) "Expression evalued to get name string for eway buffers")
 
 ;; keybinds
 (global-set-key (kbd "M-D") (lambda (cmd) (interactive "MCommand: ") (start-process cmd nil cmd)))
+
+;; startup (emacs) stuff
+(add-hook 'kill-emacs-hook 'eway--quit 0 nil)
+(add-hook 'after-init-hook (lambda () (toggle-frame-maximized)))
 
 ;; maintaining this plist requires org-plist-delete, otherwise we have
 ;; a memory leak. Not a big deal but something to remember (TODO write my own to avoid the dep)
@@ -34,17 +38,50 @@
   "get the buffer associated with the id from the plist, or return nil"
   (plist-get eway--WM-window-plist id))
 
+(defun eway--show-buffer (buf)
+  "make the buffer visible somehow. This is vaguely like bring a
+window to the front (when it gets forcus or something)"
+  (switch-to-buffer buf))
+
+(defun eway--hide-buffer (buf)
+  "get the buffer out of sight"
+  (bury-buffer buf))
+
 (defun eway--destroy (id)
   "respond to a destroy request from the socket"
   (let ((buf (eway--eway-buffer-from-WM-id id)))
     (when buf
       (kill-buffer buf))))
 
-(defun eway--rename (id name)
-  "set the user visible name of this buffer. Can be overwritten by the user if they care. For now it will just be the app_id. This isn't know at time of creation, see wayland standard of xdg_toplevel"
+(defun eway--rename (id)
+  "update the user visible name of this buffer. Can be overwritten by the user if they care."
   (let ((buf (eway--eway-buffer-from-WM-id id)))
     (with-current-buffer buf
-      (rename-buffer name))))
+      (rename-buffer (eval eway-name-format t)))))
+
+(defun eway--map-buffer (id)
+  "respond to a surface being mapped. It should already have a
+buffer, it's just ready to be shown now"
+  (let ((buf (eway--eway-buffer-from-WM-id id)))
+    (eway--show-buffer buf)
+    (eway--inform-resize-translate buf)))
+
+(defun eway--unmap-buffer (id)
+  "respond to a surface being unmapped. A seperate call will destroy
+the buffer, for now just get it out of sight, as the client will
+not be populating it correctly."
+  (let ((buf (eway--eway-buffer-from-WM-id id)))
+    (eway--hide-buffer buf)))
+
+(defun eway--update-title (id title)
+  "change the title of the associated buffer"
+  (with-current-buffer (eway--eway-buffer-from-WM-id id)
+    (setq eway-WM-title title)))
+
+(defun eway--update-appid (id appid)
+  "change the title of the associated buffer"
+  (with-current-buffer (eway--eway-buffer-from-WM-id id)
+    (setq eway-WM-appid appid)))
 
 (defun eway--parse-request ()
   "parse and fufill request in `eway--unfinished-request'"
@@ -58,11 +95,22 @@
 	  ((string= (car parts) "FOCUS")
 	   (let* ((id (string-to-number (car (cdr parts)))))
 	     (eway--change-focus id)))
-	  ((or (string= (car parts) "TITLE")
-	       (string= (car parts) "APPID"))
+	  ((string= (car parts) "TITLE")
 	   (let* ((id (string-to-number (car (cdr parts))))
-		  (name (car (cdr (cdr parts)))))
-	     (eway--rename id name)))
+		  (title (car (cdr (cdr parts)))))
+	     (eway--update-title id title)
+	     (eway--rename id)))
+	  ((string= (car parts) "APPID")
+	   (let* ((id (string-to-number (car (cdr parts))))
+		  (appid (car (cdr (cdr parts)))))
+	     (eway--update-appid id appid)
+	     (eway--rename id)))
+	  ((string= (car parts) "MAP")
+	   (let ((id (string-to-number (car (cdr parts)))))
+	     (eway--map-buffer id)))
+	  ((string= (car parts) "UNMAP")
+	   (let ((id (string-to-number (car (cdr parts)))))
+	     (eway--unmap-buffer id)))
 	  (t
 	   (message "Unrecognized ipc request: %S" parts)))))
 
@@ -158,7 +206,10 @@
 	(eway--pass-message (format "HIDE %d\n" id))))))
 
 (defun eway--inform-resize-translate (buffer)
-  "tells the comp process to update where the WM-window is and how big it is. This will show the given window. Hiding windows should be done with `eway--inform-hide' instead of setting things to zero here."
+  "tells the comp process to update where the WM-window is and how
+big it is. This will show the given window. Hiding windows should
+be done with `eway--inform-hide' instead of setting things to
+zero here."
   (with-current-buffer buffer
     (when (eq major-mode 'eway-mode)
       (let ((id (eway--get-WM-id buffer)))

@@ -23,4 +23,8 @@ int ipc_inform_title(int id, const char* title);
 
 int ipc_inform_app_id(int id, const char* app_id);
 
+int ipc_inform_map(int id);
+
+int ipc_inform_unmap(int id);
+
 int ipc_request_focus(int id);

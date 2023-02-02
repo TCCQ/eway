@@ -261,6 +261,9 @@ int server_init (struct server* server) {
 }
 
 void server_cleanup (struct server* server) {
-  wl_display_destroy_clients(server->display);
+  /*
+   * This causes double free. Happens automatically here (?)
+   * wl_display_destroy_clients(server->display);
+   */
   wl_display_destroy(server->display);
 }

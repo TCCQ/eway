@@ -50,7 +50,7 @@ int ipc_parse(char* line) {
      end. Attempt to match it with one of the expected requests on the
      ipc socket and perfom said request. Will do a single pass and
      consume tokens along the way. */
-  wlr_log(WLR_DEBUG, "%s", line);
+  wlr_log(WLR_DEBUG, "GOT IPC: %s", line);
   enum socket_request type;
   int id;
   int args[4];
@@ -391,8 +391,10 @@ int init_socket (struct server* server) {
     return -1;
   }
 
-  ipc_display_destroy.notify = ipc_on_display_destroy;
-  wl_display_add_destroy_listener(server->display, &ipc_display_destroy);
+  /*
+   * ipc_display_destroy.notify = ipc_on_display_destroy;
+   * wl_display_add_destroy_listener(server->display, &ipc_display_destroy);
+   */
   ipc_event_source = wl_event_loop_add_fd(server->wl_event_loop, ipc_fd, WL_EVENT_READABLE | WL_EVENT_WRITABLE, ipc_handle_connection, server);
 
 
@@ -440,8 +442,33 @@ int ipc_inform_app_id (int id, const char* app_id) {
   return ipc_queue_write(msg, len);  
 }
 
+int ipc_inform_map (int id) {
+  /* inform the other side of the pipe that a surface wants to be mapped */
+  if (id == 0) return 0;
+  char msg[256];
+  int len = snprintf(msg, 256, "MAP %d\n", id);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in the ipc_inform_map call");
+    return -1;
+  } 
+  return ipc_queue_write(msg, len);
+}
+
+int ipc_inform_unmap (int id) {
+  /* inform the other side of the pipe that a surface wants to be unmapped */
+  if (id == 0) return 0;
+  char msg[256];
+  int len = snprintf(msg, 256, "UNMAP %d\n", id);
+  if (len < 0) {
+    wlr_log(WLR_ERROR, "Error in the ipc_inform_unmap call");
+    return -1;
+  } 
+  return ipc_queue_write(msg, len);
+}
+
 int ipc_inform_destroy (int id) {
   /* inform the other side of the pipe that the surface with said id should no longer be considered extant */
+  if (id == 0) return 0;
   char msg[256];
   int len = snprintf(msg, 256, "DESTROY %d\n", id);
   if (len < 0) {

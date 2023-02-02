@@ -26,12 +26,13 @@ void xdg_toplevel_map (struct wl_listener *listener, void *data) {
 
   /* focus? */
   keyboard_focus_to_view(view, view->xdg_toplevel->base->surface);
-  ipc_request_focus(view->id);
+  ipc_inform_map(view->id);
 }
 
 void xdg_toplevel_unmap (struct wl_listener *listener, void *data) {
   struct view *view = wl_container_of(listener, view, unmap);
 
+  ipc_inform_unmap(view->id);
   wl_list_remove(&view->link);
 }
 
@@ -132,6 +133,7 @@ void xdg_toplevel_set_app_id (struct wl_listener *listener, void *data) {
       break;
     }
   }
+  wlr_log(WLR_DEBUG, "appid to %s %s", source, view->app_id);
   ipc_inform_app_id(view->id, view->app_id);
 }
 
